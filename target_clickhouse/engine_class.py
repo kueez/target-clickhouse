@@ -17,6 +17,19 @@ class SupportedEngines(str, Enum):
     REPLICATED_AGGREGATING_MERGE_TREE = "ReplicatedAggregatingMergeTree"
 
 
+REPLICATED_TO_BASE = {
+    SupportedEngines.REPLICATED_MERGE_TREE: SupportedEngines.MERGE_TREE,
+    SupportedEngines.REPLICATED_REPLACING_MERGE_TREE: (
+        SupportedEngines.REPLACING_MERGE_TREE
+    ),
+    SupportedEngines.REPLICATED_SUMMING_MERGE_TREE: (
+        SupportedEngines.SUMMING_MERGE_TREE
+    ),
+    SupportedEngines.REPLICATED_AGGREGATING_MERGE_TREE: (
+        SupportedEngines.AGGREGATING_MERGE_TREE
+    ),
+}
+
 ENGINE_MAPPING = {
     SupportedEngines.MERGE_TREE: engines.MergeTree,
     SupportedEngines.REPLACING_MERGE_TREE: engines.ReplacingMergeTree,
@@ -65,12 +78,14 @@ def create_engine_wrapper(
         engine_args["order_by"] = order_by_keys
 
     if config is not None:
-        if engine_type in (
+        is_replicated = engine_type in (
             SupportedEngines.REPLICATED_MERGE_TREE,
             SupportedEngines.REPLICATED_REPLACING_MERGE_TREE,
             SupportedEngines.REPLICATED_SUMMING_MERGE_TREE,
             SupportedEngines.REPLICATED_AGGREGATING_MERGE_TREE,
-        ):
+        )
+
+        if is_replicated:
             table_path: Optional[str] = config.get("table_path")
             replica_name: Optional[str] = config.get("replica_name")
             if table_path is not None and replica_name is not None:
@@ -80,6 +95,12 @@ def create_engine_wrapper(
                     )
                 engine_args["table_path"] = table_path
                 engine_args["replica_name"] = replica_name
+            else:
+                # Inside a Replicated database, use the non-Replicated engine
+                # class. ClickHouse auto-converts MergeTree → ReplicatedMergeTree
+                # etc. and manages ZK paths from the database-level Replicated
+                # engine, so explicit paths are not needed.
+                engine_type = REPLICATED_TO_BASE.get(engine_type, engine_type)
 
         version_column: Optional[str] = config.get("version_column")
         if version_column and engine_type in (
