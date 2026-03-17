@@ -145,6 +145,14 @@ class TargetClickhouse(SQLTarget):
             description="List of columns to order by. Used for engines that require "
                         "ordering.",
         ),
+        th.Property(
+            "version_column",
+            th.StringType,
+            required=False,
+            description="Column used as the version for ReplacingMergeTree deduplication. "
+                        "The row with the highest value in this column is kept during merges. "
+                        "Typically a timestamp like `updatedAt` or an incrementing integer.",
+        ),
     ).to_dict()
 
     default_sink_class = ClickhouseSink

@@ -86,6 +86,13 @@ def create_engine_wrapper(
                 msg = "Replica name (replica_name) is not defined."
                 raise ValueError(msg)
 
+        version_column: Optional[str] = config.get("version_column")
+        if version_column and engine_type in (
+            SupportedEngines.REPLACING_MERGE_TREE,
+            SupportedEngines.REPLICATED_REPLACING_MERGE_TREE,
+        ):
+            engine_args["ver"] = version_column
+
         engine_class = get_engine_class(engine_type)
 
     return engine_class(**engine_args)
