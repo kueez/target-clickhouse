@@ -72,19 +72,14 @@ def create_engine_wrapper(
             SupportedEngines.REPLICATED_AGGREGATING_MERGE_TREE,
         ):
             table_path: Optional[str] = config.get("table_path")
-            if table_path is not None:
-                if "$" in table_path:
-                    table_path = Template(table_path).substitute(table_name=table_name)
-                engine_args["table_path"] = table_path
-            else:
-                msg = "Table path (table_path) is not defined."
-                raise ValueError(msg)
             replica_name: Optional[str] = config.get("replica_name")
-            if replica_name is not None:
+            if table_path is not None and replica_name is not None:
+                if "$" in table_path:
+                    table_path = Template(table_path).substitute(
+                        table_name=table_name,
+                    )
+                engine_args["table_path"] = table_path
                 engine_args["replica_name"] = replica_name
-            else:
-                msg = "Replica name (replica_name) is not defined."
-                raise ValueError(msg)
 
         version_column: Optional[str] = config.get("version_column")
         if version_column and engine_type in (

@@ -214,8 +214,9 @@ class ClickhouseConnector(SQLConnector):
         )
 
         table_args = {}
-        if self.config.get("cluster_name"):
-            table_args["clickhouse_cluster"] = self.config.get("cluster_name")
+        cluster_name = self.config.get("cluster_name")
+        if cluster_name and not engine_type.startswith("Replicated"):
+            table_args["clickhouse_cluster"] = cluster_name
 
         _ = Table(table_name, meta, *columns, table_engine, **table_args)
         meta.create_all(self._engine)
@@ -223,9 +224,11 @@ class ClickhouseConnector(SQLConnector):
     def prepare_schema(self, schema_name: str) -> None:
         """Create the target database if it does not exist.
 
-        In Clickhouse, a schema is a database. When cluster_name is configured,
-        the database is created ON CLUSTER so all replicas get it even with
-        round-robin DNS load balancing.
+        When cluster_name is set and engine_type is a Replicated variant, the
+        database is created with ENGINE = Replicated ON CLUSTER.  The Replicated
+        database engine propagates all subsequent table DDL via ZooKeeper
+        automatically, so individual CREATE TABLE statements must NOT use
+        ON CLUSTER (ClickHouse rejects it).
 
         Uses a temporary connection to the 'default' database to avoid the
         chicken-and-egg problem where the main sqlalchemy_url references a
@@ -239,13 +242,21 @@ class ClickhouseConnector(SQLConnector):
             return
 
         cluster_name = self.config.get("cluster_name")
+        engine_type = self.config.get("engine_type", "")
+        use_replicated = engine_type.startswith("Replicated")
+
+        on_cluster = ""
+        engine_clause = ""
         if cluster_name:
-            ddl = (
-                f"CREATE DATABASE IF NOT EXISTS `{schema_name}` "
-                f"ON CLUSTER '{cluster_name}'"
-            )
-        else:
-            ddl = f"CREATE DATABASE IF NOT EXISTS `{schema_name}`"
+            on_cluster = f" ON CLUSTER '{cluster_name}'"
+            if use_replicated:
+                engine_clause = (
+                    f" ENGINE = Replicated("
+                    f"'/clickhouse/databases/{schema_name}', "
+                    f"'{{shard}}', '{{replica}}')"
+                )
+
+        ddl = f"CREATE DATABASE IF NOT EXISTS `{schema_name}`{on_cluster}{engine_clause}"
 
         main_url = self.get_sqlalchemy_url(self.config)
         bootstrap_url = main_url.rsplit("/", 1)[0] + "/default"
