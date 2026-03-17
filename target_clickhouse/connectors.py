@@ -14,7 +14,7 @@ from clickhouse_sqlalchemy import (
 from pkg_resources import get_distribution, parse_version
 from singer_sdk import typing as th
 from singer_sdk.connectors import SQLConnector
-from sqlalchemy import Column, MetaData, create_engine
+from sqlalchemy import Column, MetaData, create_engine, text
 
 from target_clickhouse.engine_class import SupportedEngines, create_engine_wrapper
 
@@ -220,16 +220,31 @@ class ClickhouseConnector(SQLConnector):
         _ = Table(table_name, meta, *columns, table_engine, **table_args)
         meta.create_all(self._engine)
 
-    def prepare_schema(self, _: str) -> None:
-        """Create the target database schema.
+    def prepare_schema(self, schema_name: str) -> None:
+        """Create the target database if it does not exist.
 
-        In Clickhouse, a schema is a database, so this method is a no-op.
+        In Clickhouse, a schema is a database. When cluster_name is configured,
+        the database is created ON CLUSTER so all replicas get it even with
+        round-robin DNS load balancing.
 
         Args:
-            schema_name: The target schema name.
+            schema_name: The target schema/database name.
 
         """
-        return
+        if not schema_name:
+            return
+
+        cluster_name = self.config.get("cluster_name")
+        if cluster_name:
+            ddl = (
+                f"CREATE DATABASE IF NOT EXISTS `{schema_name}` "
+                f"ON CLUSTER '{cluster_name}'"
+            )
+        else:
+            ddl = f"CREATE DATABASE IF NOT EXISTS `{schema_name}`"
+
+        with self._connect() as conn, conn.begin():
+            conn.execute(text(ddl))
 
     def prepare_column(
         self,
