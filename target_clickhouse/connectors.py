@@ -189,11 +189,13 @@ class ClickhouseConnector(SQLConnector):
         except KeyError as e:
             msg = f"Schema for '{full_table_name}' does not define properties: {schema}"
             raise RuntimeError(msg) from e
+        version_column = self.config.get("version_column")
         for property_name, property_jsonschema in properties.items():
             is_primary_key = property_name in primary_keys
+            is_version_col = property_name == version_column
             sql_type = self.to_sql_type(
                 property_jsonschema,
-                is_primary_key=is_primary_key,
+                is_primary_key=is_primary_key or is_version_col,
             )
             columns.append(
                 Column(
