@@ -3,6 +3,7 @@ from string import Template
 from typing import List, Optional
 
 from clickhouse_sqlalchemy import engines
+from clickhouse_sqlalchemy.engines.replicated import ReplicatedEngineMixin
 from sqlalchemy import func
 
 
@@ -17,18 +18,24 @@ class SupportedEngines(str, Enum):
     REPLICATED_AGGREGATING_MERGE_TREE = "ReplicatedAggregatingMergeTree"
 
 
-REPLICATED_TO_BASE = {
-    SupportedEngines.REPLICATED_MERGE_TREE: SupportedEngines.MERGE_TREE,
-    SupportedEngines.REPLICATED_REPLACING_MERGE_TREE: (
-        SupportedEngines.REPLACING_MERGE_TREE
-    ),
-    SupportedEngines.REPLICATED_SUMMING_MERGE_TREE: (
-        SupportedEngines.SUMMING_MERGE_TREE
-    ),
-    SupportedEngines.REPLICATED_AGGREGATING_MERGE_TREE: (
-        SupportedEngines.AGGREGATING_MERGE_TREE
-    ),
-}
+def _patched_get_parameters(self):
+    """Skip path/replica parameters when they are empty.
+
+    Inside a Replicated database engine, ClickHouse auto-assigns ZK paths
+    so the table DDL should be ReplicatedReplacingMergeTree(ver) without
+    any path or replica arguments.  The upstream clickhouse-sqlalchemy
+    always emits them, so we suppress empty values here.
+    """
+    if self.table_path or self.replica_name:
+        return [
+            "'{}'".format(self.table_path),
+            "'{}'".format(self.replica_name),
+        ]
+    return []
+
+
+ReplicatedEngineMixin.get_parameters = _patched_get_parameters
+
 
 ENGINE_MAPPING = {
     SupportedEngines.MERGE_TREE: engines.MergeTree,
@@ -61,7 +68,6 @@ def create_engine_wrapper(
     config: Optional[dict] = None,
     order_by_keys: Optional[List[str]] = None,
 ):
-    # check if engine type is in supported engines
     if is_supported_engine(engine_type) is False:
         msg = f"Engine type {engine_type} is not supported."
         raise ValueError(msg)
@@ -70,22 +76,18 @@ def create_engine_wrapper(
     if len(primary_keys) > 0:
         engine_args["primary_key"] = primary_keys
     else:
-        # If no primary keys are specified,
-        # then Clickhouse expects the data to be indexed on all fields via tuple().
         engine_args["order_by"] = func.tuple()
 
     if order_by_keys is not None:
         engine_args["order_by"] = order_by_keys
 
     if config is not None:
-        is_replicated = engine_type in (
+        if engine_type in (
             SupportedEngines.REPLICATED_MERGE_TREE,
             SupportedEngines.REPLICATED_REPLACING_MERGE_TREE,
             SupportedEngines.REPLICATED_SUMMING_MERGE_TREE,
             SupportedEngines.REPLICATED_AGGREGATING_MERGE_TREE,
-        )
-
-        if is_replicated:
+        ):
             table_path: Optional[str] = config.get("table_path")
             replica_name: Optional[str] = config.get("replica_name")
             if table_path is not None and replica_name is not None:
@@ -96,11 +98,8 @@ def create_engine_wrapper(
                 engine_args["table_path"] = table_path
                 engine_args["replica_name"] = replica_name
             else:
-                # Inside a Replicated database, use the non-Replicated engine
-                # class. ClickHouse auto-converts MergeTree → ReplicatedMergeTree
-                # etc. and manages ZK paths from the database-level Replicated
-                # engine, so explicit paths are not needed.
-                engine_type = REPLICATED_TO_BASE.get(engine_type, engine_type)
+                engine_args["table_path"] = ""
+                engine_args["replica_name"] = ""
 
         version_column: Optional[str] = config.get("version_column")
         if version_column and engine_type in (
