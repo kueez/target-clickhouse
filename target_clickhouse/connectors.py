@@ -227,6 +227,10 @@ class ClickhouseConnector(SQLConnector):
         the database is created ON CLUSTER so all replicas get it even with
         round-robin DNS load balancing.
 
+        Uses a temporary connection to the 'default' database to avoid the
+        chicken-and-egg problem where the main sqlalchemy_url references a
+        database that doesn't exist yet.
+
         Args:
             schema_name: The target schema/database name.
 
@@ -243,8 +247,17 @@ class ClickhouseConnector(SQLConnector):
         else:
             ddl = f"CREATE DATABASE IF NOT EXISTS `{schema_name}`"
 
-        with self._connect() as conn, conn.begin():
-            conn.execute(text(ddl))
+        main_url = self.get_sqlalchemy_url(self.config)
+        bootstrap_url = main_url.rsplit("/", 1)[0] + "/default"
+        if "?" in main_url:
+            query_string = main_url.split("?", 1)[1]
+            bootstrap_url = bootstrap_url.split("?")[0] + "?" + query_string
+        bootstrap_engine = create_engine(bootstrap_url)
+        try:
+            with bootstrap_engine.connect() as conn:
+                conn.execute(text(ddl))
+        finally:
+            bootstrap_engine.dispose()
 
     def prepare_column(
         self,
