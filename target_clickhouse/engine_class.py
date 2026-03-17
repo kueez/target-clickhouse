@@ -91,7 +91,7 @@ def create_engine_wrapper(
             SupportedEngines.REPLACING_MERGE_TREE,
             SupportedEngines.REPLICATED_REPLACING_MERGE_TREE,
         ):
-            engine_args["ver"] = version_column
+            engine_args["version"] = version_column
 
         engine_class = get_engine_class(engine_type)
 
